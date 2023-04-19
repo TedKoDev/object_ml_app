@@ -7,6 +7,7 @@ import android.Manifest
 import android.app.Activity
 
 import android.content.ContentValues
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.*
@@ -14,6 +15,7 @@ import android.media.ExifInterface
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.MediaStore
 import android.speech.tts.TextToSpeech
 import android.util.Log
@@ -25,57 +27,41 @@ import androidx.core.content.ContextCompat
 import androidx.recyclerview.widget.RecyclerView
 import com.example.a0328kotlin_recy.MainAdapter
 import com.example.a0328kotlin_recy.MainData
-import com.example.a0413yolov8kotlin.DataProcess
+import com.example.a0413yolov8kotlin.DataProcess1
 import com.example.a0413yolov8kotlin.DataProcess2
-import com.example.object_ml_app.ml.Newfruit
-import com.example.object_ml_app.ml.SsdMobilenetV11Metadata1
-import org.tensorflow.lite.Interpreter
-import org.tensorflow.lite.support.common.FileUtil
-import org.tensorflow.lite.support.image.ImageProcessor
-import org.tensorflow.lite.support.image.TensorImage
-import org.tensorflow.lite.support.image.ops.ResizeOp
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
-import java.io.FileInputStream
-import java.io.FileOutputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.channels.FileChannel
+
+import java.io.*
 import java.text.SimpleDateFormat
 import java.util.*
 
-// MainActivity 클래스 선언 (AppCompatActivity를 상속받음)
+
 class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
 
 
-//    val: 불변(Immutable) 변수로, 값의 읽기만 허용되는 변수. 값(Value)의 약자이다.
-//    var: 가변(Mutable) 변수로, 값의 읽기와 쓰기가 모두 허용되는 변수. 변수(Variable)의 약자이다
-
-
     // 필요한 변수들 미리 선언 (나중에 초기화)
-    lateinit var imageView: ImageView
-    lateinit var bitmap: Bitmap
-    lateinit var button1: Button
-    lateinit var button2: Button
-    lateinit var listbtn: Button
-
-    lateinit var model: SsdMobilenetV11Metadata1
-    lateinit var labels : List<String>
+    lateinit var imageView: ImageView  //이미지 뷰
+    lateinit var bitmap: Bitmap        //비트맵 - 이미지를 담는 변수
+    lateinit var button1: Button       //갤러리 버튼
+    lateinit var button2: Button        //카메라 버튼
+    lateinit var listbtn: Button        //단어장 버튼
 
 
-
-    lateinit var mainAdapter: MainAdapter
-    lateinit var rv_profile: RecyclerView
-    val datas = mutableListOf<MainData>()
+    // 검출결과 출력용 리사이클러뷰 관련 변수
+    lateinit var mainAdapter: MainAdapter //리사이클러뷰 어댑터
+    lateinit var rv_profile: RecyclerView //리사이클러뷰
+    val datas = mutableListOf<MainData>() //리사이클러뷰 데이터 리스트
 
 
 
-    private lateinit var textView: TextView
+    //객체인식 관련 파트 객체 생성
+    private val dataProcess1 = DataProcess1(context = this)   // yolov8n 모델 DataProcess1 객체 생성
+    private val dataProcess2 = DataProcess2(context = this) // v8Fruits 모델 DataProcess2 객체 생성
 
-    private val dataProcess = DataProcess(context = this)
-    private val dataProcess2 = DataProcess2(context = this)
-    private lateinit var session: OrtSession
-    private lateinit var ortEnvironment: OrtEnvironment
+        //ONNXRuntime관련 객체 생성 (onnxruntime 라이브러리에서 제공)
+        // ...1 = yolov8n 모델  , ...2 = v8Fruits 모델
+    private lateinit var session1: OrtSession   // ortSession 객체 생성 = OrtSession 클래스는 ONNX 모델을 로드하고 모델을 실행하는 데 사용됩니다.
+    private lateinit var ortEnvironment1: OrtEnvironment //OrtEnvironment는 실행 환경의 이름, 로그 출력 및 디버깅 레벨 등의 설정을 포함합니다. ONNX Runtime에서는 여러 개의 실행 환경을 동시에 사용할 수 있으며, OrtEnvironment 클래스를 사용하여 이러한 실행 환경을 구성하고 관리할 수 있습니다.
+
     private lateinit var session2: OrtSession
     private lateinit var ortEnvironment2: OrtEnvironment
 
@@ -83,11 +69,11 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
     val paint = Paint()
 
 
-
+    // 카메라 및 갤러리 권한 요청 코드
     companion object {
-        private const val PICK_IMAGE_REQUEST = 1
-        private const val ACTION_IMAGE_CAPTURE = 102
-        private const val CAMERA_PERMISSION_REQUEST_CODE = 102
+        private const val PICK_IMAGE_REQUEST = 1 // 갤러리 앱 호출 코드
+        private const val ACTION_IMAGE_CAPTURE = 102 // 카메라 앱 호출 코드
+        private const val CAMERA_PERMISSION_REQUEST_CODE = 103  // 카메라 권한 요청 코드
     }
 
     // 감지된 객체마다 다른 색상을 설정하기 위한 리스트 생성
@@ -96,70 +82,77 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
     )
 
 
-
+    // TextToSpeech 객체 생성
     private var tts: TextToSpeech? = null
-
-    // 이미지 전처리를 위한 ImageProcessor 객체 생성
-    // ResizeOp을 적용하여 이미지 크기 조절
-    val imageProcessor =
-        ImageProcessor.Builder().add(ResizeOp(300, 300, ResizeOp.ResizeMethod.BILINEAR)).build()
-
 
 
     // 액티비티 생성 시 호출되는 메소드
     override fun onCreate(savedInstanceState: Bundle?) {
-
-
-
         super.onCreate(savedInstanceState)
         // activity_main.xml을 화면에 표시
         setContentView(R.layout.activity_main)
 
+        //권한
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+            != PackageManager.PERMISSION_GRANTED) {
+            if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.CAMERA)) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST_CODE)
+            } else {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST_CODE)
+            }
+        }
 
-        rv_profile = findViewById(R.id.rv_profile)
 
-        initRecycler()
-
-
-
-
+        // 각 버튼 및 뷰 연동 (xml과 연결)
         listbtn = findViewById(R.id.listBtn)
+        rv_profile = findViewById(R.id.rv_profile)
+        imageView = findViewById(R.id.imageView)
+        button1 = findViewById(R.id.loadBtn)
+        button2 = findViewById(R.id.takeBtn)
 
 
+
+
+
+        // 갤러리 버튼 클릭 시
+        button1.setOnClickListener {
+            openGallery()
+        }
+        // 카메라 버튼 클릭 시
+        button2.setOnClickListener {
+            takePhoto()
+        }
+        // 단어장 버튼 클릭 시
         listbtn.setOnClickListener {
             val intent = Intent(this, WordListActivity::class.java)
             startActivity(intent)
         }
 
-        imageView = findViewById(R.id.imageView)
-        button1 = findViewById(R.id.loadBtn)
-        button2 = findViewById(R.id.takeBtn)
-//        textView = findViewById(R.id.textView)
+        // 모델 및 텍스트 로드 메소드
+        load()
 
-        dataProcess.loadModel() // onnx 모델 불러오기
-        dataProcess.loadLabel() // coco txt 파일 불러오기
+        // 리사이클러뷰 실행 메소드
+        initRecycler()
 
-
-        try {
-            // ortEnvironment 변수 초기화
-            ortEnvironment = OrtEnvironment.getEnvironment()
-            session = ortEnvironment.createSession(
-                this.filesDir.absolutePath.toString() + "/" + DataProcess.FILE_NAME,
-                OrtSession.SessionOptions()
-            )
-        } catch (e: OrtException) {
-            // 예외 처리: ONNX 모델 로드 및 세션 생성 시 예외 처리
-            e.printStackTrace()
-            // 예외 처리에 따른 처리 로직 추가
-        }
+    }
+    // 액티비티 생성 시 호출되는 메소드 끝
 
 
+    private fun load() {
+        // 1번모델용 시작
+        dataProcess1.loadModel() // onnx 모델 불러오기
+        dataProcess1.loadLabel() // coco txt 파일 불러오기
         // 2번모델용 시작
         dataProcess2.loadModel() // onnx 모델 불러오기
         dataProcess2.loadLabel() // coco txt 파일 불러오기
 
-
         try {
+            // ortEnvironment 변수 초기화
+            ortEnvironment1 = OrtEnvironment.getEnvironment()
+            session1 = ortEnvironment1.createSession(
+                this.filesDir.absolutePath.toString() + "/" + DataProcess1.FILE_NAME,
+                OrtSession.SessionOptions()
+            )
             // ortEnvironment2 변수 초기화
             ortEnvironment2 = OrtEnvironment.getEnvironment()
             session2 = ortEnvironment2.createSession(
@@ -171,25 +164,27 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
             e.printStackTrace()
             // 예외 처리에 따른 처리 로직 추가
         }
-        // 2번모델용 끝
-        button1.setOnClickListener {
-            openGallery()
-        }
+    }
+    // 리사이클러뷰 실행 메소드
+    private fun initRecycler() {
+        mainAdapter = MainAdapter(this)
+        rv_profile.adapter = mainAdapter
+        rv_profile.addItemDecoration(DividerItemDecorator(this, 20, 10))
+    }
 
-        button2.setOnClickListener {
-            takePhoto()
-        }
-
-        // 카메라 권한 요청
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-            != PackageManager.PERMISSION_GRANTED) {
-            if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.CAMERA)) {
-                // 사용자가 권한을 거부하고 "다시 묻지 않음" 옵션을 선택한 경우에 대한 처리 로직 추가
-            } else {
-                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST_CODE)
-            }
+    // 리사이클러뷰 Item 간격 설정
+    class DividerItemDecorator(private val context: Context, private val verticalHeight: Int, private val horizontalHeight: Int) : RecyclerView.ItemDecoration() {
+        override fun getItemOffsets(outRect: Rect, view: View, parent: RecyclerView, state: RecyclerView.State) {
+            super.getItemOffsets(outRect, view, parent, state)
+            outRect.top = verticalHeight
+            outRect.bottom = verticalHeight
+            outRect.left = horizontalHeight
+            outRect.right = horizontalHeight
         }
     }
+
+
+    //tts
     override fun onInit(status: Int) {
         if (status == TextToSpeech.SUCCESS) {
             val result = tts!!.setLanguage(Locale.KOREAN)
@@ -202,20 +197,23 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
         }
     }
 
+    //사진촬영
     private fun takePhoto() {
         val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
         startActivityForResult(intent, ACTION_IMAGE_CAPTURE)
     }
 
+    //갤러리
     private fun openGallery() {
         val intent = Intent(Intent.ACTION_PICK, MediaStore.Images.Media.EXTERNAL_CONTENT_URI)
         startActivityForResult(intent, PICK_IMAGE_REQUEST)
     }
 
+    // 갤러리에서 가져온것 또는 사진촬영 결과값
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
 
-        if (requestCode == PICK_IMAGE_REQUEST && resultCode == Activity.RESULT_OK && data != null) {
+        if (requestCode == PICK_IMAGE_REQUEST && resultCode == Activity.RESULT_OK && data != null) {  //갤러리에서 가져온것
             // 받아온 이미지를 uri 변수에 저장
             val uri = data?.data
 
@@ -241,13 +239,16 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
             // 이미지 처리 함수 호출
             imageProcess(bitmap)
 
-        } else if (requestCode == ACTION_IMAGE_CAPTURE) {
+
+        }else if (requestCode == ACTION_IMAGE_CAPTURE) {   // 사진 촬영
             // 사진을 찍은 결과값을 bitmap 변수에 저장
             bitmap = data?.extras?.get("data") as Bitmap
 
-            //이미지 퀄리티 높이기
+            //이미지 퀄리티 높이기 위한 코드 이미지 크기를 줄여서 퀄리티를 높임 (별 효과가 없음)
             val stream = ByteArrayOutputStream()
-            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, stream)
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
+
+            //이미지를 byte 배열로 변환
             val byteArray = stream.toByteArray()
             bitmap = BitmapFactory.decodeByteArray(byteArray, 0, byteArray.size)
 
@@ -255,6 +256,8 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
             val exif = ExifInterface(ByteArrayInputStream(byteArray))
             val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
 
+            //이미지 회전 방지코드
+            //Matrix란 이미지를 회전, 이동, 크기 변환 등의 변형을 적용하기 위한 클래스
             val matrix = Matrix()
             when (orientation) {
                 ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
@@ -265,62 +268,72 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
             bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
 
             saveFile(RandomFileName(), "image/jpeg", bitmap)
+
             // 이미지 처리 함수 호출
             imageProcess(bitmap)
         }
 
     }
 
-
+    // 이미지 처리 함수
     private fun imageProcess(bitmap0: Bitmap) {
 
         val predictedClassNames = ArrayList<String>() // ArrayList to store predicted class names
 
-        val bitmap1 = dataProcess.imageToBitmap(bitmap0)
+        // 이미지를 bitmap으로 변환
+        val bitmap1 = dataProcess1.imageToBitmap(bitmap0)
         val bitmap2 = dataProcess2.imageToBitmap(bitmap0)
 
 
-        val floatBuffer1 = dataProcess.bitmapToFloatBuffer(bitmap1)
+        // 이미지를 floatBuffer로 변환
+        val floatBuffer1 = dataProcess1.bitmapToFloatBuffer(bitmap1)
         val floatBuffer2 = dataProcess2.bitmapToFloatBuffer(bitmap2)
-        val inputName = session.inputNames.iterator().next() // session 이름
+
+
+        val inputName = session1.inputNames.iterator().next() // session 이름
         val inputName2 = session2.inputNames.iterator().next() // session 이름
 
         // 모델의 요구 입력값 [1 3 640 640] [배치 사이즈, 픽셀(RGB), 너비, 높이], 모델마다 크기는 다를 수 있음.
         val shape = longArrayOf(
-            DataProcess.BATCH_SIZE.toLong(),
-            DataProcess.PIXEL_SIZE.toLong(),
-            DataProcess.INPUT_SIZE.toLong(),
-            DataProcess.INPUT_SIZE.toLong()
+            DataProcess1.BATCH_SIZE.toLong(),
+            DataProcess1.PIXEL_SIZE.toLong(),
+            DataProcess1.INPUT_SIZE.toLong(),
+            DataProcess1.INPUT_SIZE.toLong()
         )
-        val inputTensor1 = OnnxTensor.createTensor(ortEnvironment, floatBuffer1, shape)
-        val inputTensor2 = OnnxTensor.createTensor(ortEnvironment2, floatBuffer2, shape)
-        val resultTensor1 = session.run(Collections.singletonMap(inputName, inputTensor1))
-        val resultTensor2 = session2.run(Collections.singletonMap(inputName2, inputTensor2))
-        val outputs1 = resultTensor1.get(0).value as Array<*> // [1 84 8400]
-        val outputs2 = resultTensor2.get(0).value as Array<*> // [1 84 8400]
-        val results1 = dataProcess.outputsToNPMSPredictions(outputs1)
-        val results2 = dataProcess2.outputsToNPMSPredictions(outputs2)
 
 
-        //results1, results2 값을 하나로 합침
-//        val results3 = results + results2
+        val inputTensor1 = OnnxTensor.createTensor(ortEnvironment1, floatBuffer1, shape)   // 첫 번째 모델의 입력값 생성
+        val inputTensor2 = OnnxTensor.createTensor(ortEnvironment2, floatBuffer2, shape)   // 두 번째 모델의 입력값 생성
 
+        val resultTensor1 = session1.run(Collections.singletonMap(inputName, inputTensor1))   // 첫 번째 모델에 대한 예측값 반환
+        val resultTensor2 = session2.run(Collections.singletonMap(inputName2, inputTensor2))  // 두 번째 모델에 대한 예측값 반환
 
+        val outputs1 = resultTensor1.get(0).value as Array<*> // 첫 번째 모델에서 반환된 예측값 배열
+        val outputs2 = resultTensor2.get(0).value as Array<*> // 두 번째 모델에서 반환된 예측값 배열
+
+        val results1 = dataProcess1.outputsToNPMSPredictions(outputs1)   // 첫 번째 모델의 예측값 후처리
+        val results2 = dataProcess2.outputsToNPMSPredictions(outputs2)   // 두 번째 모델의 예측값 후처리
+
+        //위 코드는 두 개의 ONNX 모델에 대해 예측값을 생성하는 코드입니다.
+        //
+        //inputTensor1과 inputTensor2는 각각 첫 번째와 두 번째 모델에 대한 입력값 텐서를 생성합니다.
+        //resultTensor1과 resultTensor2는 각 모델에 대한 입력값을 전달하고 예측 결과값을 반환합니다.
+        //outputs1과 outputs2는 각 모델에서 반환된 결과값입니다. resultTensor1.get(0).value와 resultTensor2.get(0).value는 각 모델의 예측 결과값을 ONNX 텐서 객체로 반환하는데, as Array<*>를 사용하여 결과값을 배열로 변환합니다.
+        //results1과 results2는 각 모델의 예측 결과값을 후처리하여 최종 예측값을 생성하는 함수입니다. outputs1과 outputs2를 인자로 받아 처리하며, 최종 예측값을 반환합니다.
 
 
 
         Log.d("results1 Class", "results1 : $results1")
         Log.d("results2 Class", "results2 : $results2")
-//        Log.d("results3 Class", "results3 : $results3")
-//        val results = dataProcess2.outputsToNPMSPredictions(outputs)
 
 
+        //배열 비우기 (초기화)
         datas.clear()
+
 
         val canvas = Canvas(bitmap1)
 
-        dataProcess.loadLabel()
-        dataProcess2.loadLabel()
+
 
         // 사각형 그리기 x1, y1, x2, y2
         for (result in results1) {
@@ -357,10 +370,10 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
 
 
 
-            if(predictedClassIndex >= 0 && predictedClassIndex < dataProcess.classes.size ) {
+            if(predictedClassIndex >= 0 && predictedClassIndex < dataProcess1.classes.size ) {
                 canvas.drawText(
 //                    dataProcess.classes[predictedClassIndex] + " " + result.score,
-                    dataProcess.classes[predictedClassIndex] ,
+                    dataProcess1.classes[predictedClassIndex] ,
                     x1,
                     y1 + 30f,
                     paint
@@ -369,9 +382,9 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
 
 
             // Retrieving the corresponding class label from the `classes` array
-            if (predictedClassIndex >= 0 && predictedClassIndex < dataProcess.classes.size) {
-                val predictedClassName1 = dataProcess.classes[predictedClassIndex]
-                datas.add(MainData( name = dataProcess.classes[predictedClassIndex] ,  play = R.drawable.ic_baseline_play_arrow_24 , add = R.drawable.ic_baseline_add_circle_24  ))
+            if (predictedClassIndex >= 0 && predictedClassIndex < dataProcess1.classes.size) {
+                val predictedClassName1 = dataProcess1.classes[predictedClassIndex]
+                datas.add(MainData( name = dataProcess1.classes[predictedClassIndex] ,  play = R.drawable.ic_baseline_play_arrow_24 , add = R.drawable.ic_baseline_add_circle_24  ))
 
                 Log.d("Predicted Class", predictedClassName1)
                 // Add predicted class name to the ArrayList
@@ -438,19 +451,25 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
         mainAdapter.datas = datas
         mainAdapter.notifyDataSetChanged()
         imageView.setImageBitmap(bitmap1)
-        val predictedClassesText = predictedClassNames.toString()
-//        textView.text = predictedClassesText
+
     }
 
 
-    // 사진 저장
+
+    // 촬영한 사진 저장
     fun saveFile(fileName:String, mimeType:String, bitmap: Bitmap):Uri?{
 
+        //갤러리 HangeulSquareAPP 폴더에 저장
+        val relativeLocation = Environment.DIRECTORY_PICTURES + File.separator + "HangeulSquareAPP"
+
+
+        //ContentValues 란? 키와 값으로 이루어진 데이터를 저장하는 객체
         var CV = ContentValues()
 
         // MediaStore 에 파일명, mimeType 을 지정
         CV.put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
         CV.put(MediaStore.Images.Media.MIME_TYPE, mimeType)
+        CV.put(MediaStore.Images.Media.RELATIVE_PATH, relativeLocation)
 
         // 안정성 검사
         if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q){
@@ -477,112 +496,23 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
         return uri
     }
 
-    // 파일명을 날짜 저장
+    // 파일명을 날짜로 저장
     fun RandomFileName() : String{
         val fileName = SimpleDateFormat("yyyyMMddHHmmss").format(System.currentTimeMillis())
         return fileName
     }
+
+
     // 액티비티 종료 시 호출되는 메소드
     override fun onDestroy() {
         super.onDestroy()
-        // 사용한 모델 종료
-        model.close()
-        // Shutdown TTS when
-        // activity is destroyed
+
         if (tts != null) {
             tts!!.stop()
             tts!!.shutdown()
         }
         super.onDestroy()
     }
-
-
-    // 객체 감지 및 출력을 위한 함수
-    fun get_predictions() {
-
-        var image = TensorImage.fromBitmap(bitmap) // Bitmap을 TensorImage 객체로 변환
-        image = imageProcessor.process(image) // 이미지 프로세싱
-
-        val outputs = model.process(image) // 모델 실행
-        // 결과값들을 각각의 배열로 저장
-        val locations = outputs.locationsAsTensorBuffer.floatArray
-        val classes = outputs.classesAsTensorBuffer.floatArray
-        val scores = outputs.scoresAsTensorBuffer.floatArray
-        val numberOfDetections = outputs.numberOfDetectionsAsTensorBuffer.floatArray
-
-        val mutable = bitmap.copy(Bitmap.Config.ARGB_8888, true) // 이미지 복사
-        val canvas = Canvas(mutable) // 캔버스 객체 생성
-
-        val h = mutable.height // 이미지 높이
-        val w = mutable.width // 이미지 너비
-
-        paint.textSize= h/10f // 텍스트 크기 설정
-        paint.strokeWidth= h/85f // 선 굵기 설정
-
-        var x = 0 // 인덱스
-        datas.clear()
-        // 예측값들을 반복하면서 사각형과 텍스트 그리기
-        scores.forEachIndexed(){index, f1->
-            x = index
-            x *= 4
-            if (f1 > 0.5){
-                paint.setColor(colors.get(index)) // 색깔 설정
-                paint.style= Paint.Style.STROKE // 선 스타일 설정
-                canvas.drawRect(RectF(locations.get(x+1)*w,locations.get(x)*h,locations.get(x+3)*w,locations.get(x+2)*h), paint) // 사각형 그리기
-                paint.style= Paint.Style.FILL // 채우기 스타일 설정
-                canvas.drawText(labels.get(classes.get(index).toInt())+" "+f1.toString(), locations.get(x+1)*w, locations.get(x)*h, paint) // 텍스트 그리기
-          // array 초기화
-
-
-                // array에 추가
-                datas.add(MainData( name = labels.get(classes.get(index).toInt()),  play = R.drawable.ic_baseline_play_arrow_24 , add = R.drawable.ic_baseline_add_circle_24  ))
-                mainAdapter.datas = datas
-                mainAdapter.notifyDataSetChanged()
-
-            }
-
-
-
-
-        }
-
-        imageView.setImageBitmap(mutable) // 이미지뷰에 결과 이미지 출력
-
-
-    }
-
-
-
-
-    private fun initRecycler() {
-        mainAdapter = MainAdapter(this)
-
-        rv_profile.adapter = mainAdapter
-
-        rv_profile.addItemDecoration(VerticalItemDecorator(20))
-        rv_profile.addItemDecoration(HorizontalItemDecorator(10))
-
-
-    }
-    class VerticalItemDecorator(private val divHeight : Int) : RecyclerView.ItemDecoration() {
-
-        @Override
-        override fun getItemOffsets(outRect: Rect, view: View, parent : RecyclerView, state : RecyclerView.State) {
-            super.getItemOffsets(outRect, view, parent, state)
-            outRect.top = divHeight
-            outRect.bottom = divHeight
-        }
-    }
-    class HorizontalItemDecorator(private val divHeight : Int) : RecyclerView.ItemDecoration() {
-
-        @Override
-        override fun getItemOffsets(outRect: Rect, view: View, parent : RecyclerView, state : RecyclerView.State) {
-            super.getItemOffsets(outRect, view, parent, state)
-            outRect.left = divHeight
-            outRect.right = divHeight
-        }
-    }
-
 
 
 }

@@ -98,9 +98,8 @@ class WordListActivity : AppCompatActivity() {
         val apiService: ApiService = retrofit.create(ApiService::class.java)
 
         //3. Call객체 생성
-        val access_token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJVc2VyX0lEIjoiNDY3IiwiVV9OYW1lIjoiXHVkNjRkIiwiVV9FbWFpbCI6ImdoZHhvZG1sQG5hdmVyLmNvbSIsImV4cCI6MTY4MDY3NDU1OCwiaWF0IjoxNjgwMDY5NzU4fQ." +
-                "lbY_0SLC0tMK05t6aaGPuYzkRNaawKQ_ahK9T5NvV_Q"
-        val last_id = "435"
+        val access_token = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJVc2VyX0lEIjoiMSIsIlVfTmFtZSI6IlRFRChBRE1JTikiLCJVX0VtYWlsIjoiYWRtaW5AaGFuZ2V1bHNxdWFyZS5jb20iLCJleHAiOjE2ODI0ODQxODgsImlhdCI6MTY4MTg3OTM4OH0.RsJjdFRT7svkISnTeQQw_EE46ncIHFVz4cp7WlcaCT0"
+        val last_id = "461"
         val kind = "read"
         val word = "null"
         val plus = page.toString()
@@ -117,14 +116,22 @@ class WordListActivity : AppCompatActivity() {
 
 
                     //result 값 반복해서 출력
-                    for (i in 0 until ticker?.result?.size!!) {
-                        Log.d(ContentValues.TAG, "ticker: ${ticker.result[i]}")
+                    // result 값이 있는경우에만 반복문 실행
+                    if(ticker?.result != null) {
+                        for (i in 0 until ticker?.result?.size!!) {
+                            Log.d(ContentValues.TAG, "ticker: ${ticker.result[i]}")
 
-                        datas.add(WordData( name = ticker.result[i] , play =  R.drawable.ic_baseline_play_arrow_24 ,update = R.drawable.ic_baseline_density_medium_24  ))
-                        wordAdapter.datas = datas
-                        wordAdapter.notifyDataSetChanged()
+                            datas.add(
+                                WordData(
+                                    name = ticker.result[i],
+                                    play = R.drawable.ic_baseline_play_arrow_24,
+                                    update = R.drawable.ic_baseline_density_medium_24
+                                )
+                            )
+                            wordAdapter.datas = datas
+                            wordAdapter.notifyDataSetChanged()
+                        }
                     }
-
                 } else {
                     // Handle error response
                     val errorBody = response.errorBody()?.string()
