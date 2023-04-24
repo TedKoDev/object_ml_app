@@ -93,14 +93,16 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
         setContentView(R.layout.activity_main)
 
         //권한
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-            != PackageManager.PERMISSION_GRANTED) {
-            if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.CAMERA)) {
-                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST_CODE)
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
+            || ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+            if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.CAMERA)
+                || ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)) {
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA, Manifest.permission.WRITE_EXTERNAL_STORAGE), CAMERA_PERMISSION_REQUEST_CODE)
             } else {
-                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA), CAMERA_PERMISSION_REQUEST_CODE)
+                ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.CAMERA, Manifest.permission.WRITE_EXTERNAL_STORAGE), CAMERA_PERMISSION_REQUEST_CODE)
             }
         }
+
 
 
         // 각 버튼 및 뷰 연동 (xml과 연결)
@@ -244,6 +246,9 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
             // 사진을 찍은 결과값을 bitmap 변수에 저장
             bitmap = data?.extras?.get("data") as Bitmap
 
+            Log.d("bitmap.width", bitmap.width.toString())
+            Log.d("bitmap.height", bitmap.height.toString())
+
             //이미지 퀄리티 높이기 위한 코드 이미지 크기를 줄여서 퀄리티를 높임 (별 효과가 없음)
             val stream = ByteArrayOutputStream()
             bitmap.compress(Bitmap.CompressFormat.JPEG, 80, stream)
@@ -252,22 +257,44 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
             val byteArray = stream.toByteArray()
             bitmap = BitmapFactory.decodeByteArray(byteArray, 0, byteArray.size)
 
-            //이미지의 방향 정보를 읽어옴
+
+//SKD 24, 26 버전인 경우 Matrix를 사용하여 세로로 찍은 사진을 가로로 보이게 함
+//SDK 28 버전인 경우 ExifInterface를 사용하여 세로로 찍은 사진을 가로로 보이게 함
+
+//이미지의 방향 정보를 읽어옴
             val exif = ExifInterface(ByteArrayInputStream(byteArray))
             val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
 
-            //이미지 회전 방지코드
-            //Matrix란 이미지를 회전, 이동, 크기 변환 등의 변형을 적용하기 위한 클래스
+//이미지 회전 방지코드
+//Matrix란 이미지를 회전, 이동, 크기 변환 등의 변형을 적용하기 위한 클래스
             val matrix = Matrix()
-            when (orientation) {
-                ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
-                ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
-                ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(270f)
+
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                //SDK 28 버전 이상인 경우 ExifInterface를 사용하여 세로로 찍은 사진을 가로로 보이게 함
+                when (orientation) {
+                    ExifInterface.ORIENTATION_ROTATE_90 -> matrix.setRotate(90f)
+                    ExifInterface.ORIENTATION_ROTATE_180 -> matrix.setRotate(180f)
+                    ExifInterface.ORIENTATION_ROTATE_270 -> matrix.setRotate(270f)
+                }
+            } else {
+                //SKD 24, 26 버전인 경우 Matrix를 사용하여 세로로 찍은 사진을 가로로 보이게 함
+
+                // 세로로 촬영된 경우에만 우측으로 90도 돌리기
+                if (bitmap.width == bitmap.height) {
+
+                    Log.d("동일함", bitmap.width.toString())
+
+                    matrix.setRotate(90f)
+                }
+
             }
+
             //이미지 회전
             bitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
 
-            saveFile(RandomFileName(), "image/jpeg", bitmap)
+
+
+                saveFile(RandomFileName(), "image/jpeg", bitmap)
 
             // 이미지 처리 함수 호출
             imageProcess(bitmap)
@@ -454,10 +481,61 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
 
     }
 
+    fun saveFile(fileName:String, mimeType:String, bitmap: Bitmap):Uri?{
+
+        //갤러리 HangeulSquareAPP 폴더에 저장
+        val relativeLocation = Environment.DIRECTORY_PICTURES + File.separator + "HangeulSquareAPP"
+
+
+        //ContentValues 란? 키와 값으로 이루어진 데이터를 저장하는 객체
+        var CV = ContentValues()
+
+        // MediaStore 에 파일명, mimeType 을 지정
+        CV.put(MediaStore.Images.Media.DISPLAY_NAME, fileName)
+        CV.put(MediaStore.Images.Media.MIME_TYPE, mimeType)
+
+        // 안정성 검사
+        if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q){
+            CV.put(MediaStore.Images.Media.RELATIVE_PATH, relativeLocation)
+            CV.put(MediaStore.Images.Media.IS_PENDING, 1)
+        }else{
+            val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES), "HangeulSquareAPP")
+            if(!dir.exists()){
+                dir.mkdir()
+            }
+            val file = File(dir, fileName)
+            CV.put(MediaStore.Images.Media.DATA, file.absolutePath)
+        }
+
+        // MediaStore 에 파일을 저장
+        val uri = contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, CV)
+        if(uri != null){
+            var scriptor = contentResolver.openFileDescriptor(uri, "w")
+
+            val fos = FileOutputStream(scriptor?.fileDescriptor)
+
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 100, fos)
+            fos.close()
+
+            if(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q){
+                CV.clear()
+                // IS_PENDING 을 초기화
+                CV.put(MediaStore.Images.Media.IS_PENDING, 0)
+                contentResolver.update(uri, CV, null, null)
+            }
+        }
+        return uri
+    }
+
+    // 파일명을 날짜로 저장
+    fun RandomFileName() : String{
+        val fileName = SimpleDateFormat("yyyyMMddHHmmss").format(System.currentTimeMillis()) + ".jpg"
+        return fileName
+    }
 
 
     // 촬영한 사진 저장
-    fun saveFile(fileName:String, mimeType:String, bitmap: Bitmap):Uri?{
+    fun saveFile2(fileName:String, mimeType:String, bitmap: Bitmap):Uri?{
 
         //갤러리 HangeulSquareAPP 폴더에 저장
         val relativeLocation = Environment.DIRECTORY_PICTURES + File.separator + "HangeulSquareAPP"
@@ -497,7 +575,7 @@ class MainActivity : AppCompatActivity(),TextToSpeech.OnInitListener {
     }
 
     // 파일명을 날짜로 저장
-    fun RandomFileName() : String{
+    fun RandomFileName2() : String{
         val fileName = SimpleDateFormat("yyyyMMddHHmmss").format(System.currentTimeMillis())
         return fileName
     }
